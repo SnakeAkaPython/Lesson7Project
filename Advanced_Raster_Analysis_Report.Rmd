@@ -1,0 +1,129 @@
+---
+title: "Lesson7_Adanced_Raster_Analysis"
+author: "SnakeAkaPython"
+date: "Thursday, January 15, 2015"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r Load Libraries and data}
+# libraries
+library(raster)
+## load data
+load("data/GewataB1.rda")
+load("data/GewataB2.rda")
+load("data/GewataB3.rda")
+load("data/GewataB4.rda")
+load("data/GewataB5.rda")
+load("data/GewataB7.rda")
+load("data/vcfGewata.rda")
+
+```
+
+
+```{r }
+# To avoid values much greater the 100
+vcfGewata[vcfGewata > 100] <- NA
+plot(vcfGewata, main = "VCF")
+summary(vcfGewata)
+
+
+# Put the 6 bands into a rasterBrick object to summarize together
+gewata <- brick(GewataB1,GewataB2, GewataB3, GewataB4, GewataB5, GewataB7)
+
+
+# Rescale the original reflectance values to their original scale
+gewata <- calc(gewata, fun=function(x) x / 10000)
+
+
+# Make a new raster brick of covariates by adding VCF layer
+covs <-  addLayer(gewata, vcfGewata)
+
+```
+
+Make a plot for exploring the relationship between the bands:
+
+```{r, echo=FALSE}
+# Exploring relationships between raster layers
+pairs(covs)
+
+names(covs) <- c("band1", "band2", "band3", "band4", "band5", "band7", "VCF")
+# We conclude that bands 2, 3, 5 and 7 rellate better to the VCF layers
+```
+
+
+
+```{r}
+# Extract all values into a matrix
+valuetable <- getValues(covs)
+
+
+# Get rid of NA values
+valuetable <- na.omit(valuetable)
+valuetable <- as.data.frame(valuetable)
+
+
+LMmodel <- lm(formula = VCF ~ band2 + band3 + band5, data = valuetable)
+summary(LMmodel)
+# The most important bands in predicting the tree cover is band 2, 3, 5 or 7 
+
+# Predict tree cover 
+predictVcf <-predict(covs, model=LMmodel, na.rm=T)
+
+predictVcf[predictVcf < 0] <- 0
+names(predictVcf) <- "Pred_VCF"
+
+par(mfrow = c(2, 1))
+plot(predictVcf, main = "Predicted VCF")
+plot(covs$VCF, main = "Original VCF")
+```
+
+```{r}
+
+# Calculate the Root maen squared Error between Predicted and the actual tree cover values
+Rows <- predictVcf@nrows
+Cols <- predictVcf@ncols
+RMSE <- sqrt(mean((covs$VCF[Rows, Cols]-predictVcf[Rows, Cols])^2))
+
+```
+
+```{r}
+# Load the training polygons
+load("data/trainingPoly.rda")
+
+
+# Inspect the data slot of the trainingPoly object
+trainingPoly@data$Code <- as.numeric(trainingPoly@data$Class)
+trainingPoly@data
+
+
+# Assign "code" values to raster cells
+classes <- rasterize(trainingPoly, covs$VCF, field='Code')
+
+
+# Make a new raster brick with the Predicted and the Original VCF
+Vcfbrick <- brick(covs$VCF, predictVcf)
+```
+
+```{r}
+# Calculate the mean for every class by the use of zonal()
+zonalStat_mean <- zonal(Vcfbrick, classes, fun= 'mean', digits=0, na.rm=T)
+zonalStat_mean
+zonalstatDF <- as.data.frame(zonalStat_mean)
+```
+
+
+```{r}
+# Calculate the Root mean squared Error for all of the 3 classes
+RMSE_Zonal <- sqrt((zonalstatDF$VCF - zonalstatDF$Pred_VCF)^2)
+names(RMSE_Zonal) <- c("Crop", "Forest", "Wetlands")
+RMSE_Zonal
+```
+
+# We conclude that there is a small difference between the Predicted and the Original Tree cover
+```
+
+
